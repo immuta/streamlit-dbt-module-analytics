@@ -1,0 +1,5 @@
+matplotlib
+networkx
+pandas
+seaborn
+streamlit
