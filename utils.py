@@ -71,7 +71,9 @@ def read_manifest(p):
 
 
 def read_node_graph(manifest, product_exclusions=[]):
-    df = pandas.DataFrame.from_dict(manifest["nodes"], orient="index")
+    df1 = pandas.DataFrame.from_dict(manifest["nodes"], orient="index")
+    df2 = pandas.DataFrame.from_dict(manifest["sources"], orient="index")
+    df = df1.append(df2)
     df = df.loc[df["resource_type"].isin(["seed", "source", "model"])]
     enriched = df["fqn"].apply(
         extract_attributes, product_exclusions=product_exclusions

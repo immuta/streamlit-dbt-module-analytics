@@ -26,9 +26,8 @@ manifest = read_manifest("examples/immuta/manifest.json")
 G = read_graph(manifest)
 node_df = read_node_graph(manifest)
 product_df = (
-    node_df.groupby(["product_name", "product_category", "product_layer"])
-    .size()
-    .reset_index()
+    node_df.groupby(["product_name"])
+    .agg(node_count=("unique_id", "count"))
 )
 
 edf = nx.to_pandas_edgelist(G).reset_index()
@@ -78,7 +77,7 @@ streamlit.markdown(
 )
 
 
-streamlit.dataframe(model_df.groupby(["category", "name"]).size())
+streamlit.dataframe(product_df)
 streamlit.graphviz_chart(full_viz)
 
 
@@ -90,22 +89,21 @@ streamlit.markdown(
 )
 selected_product = streamlit.selectbox(
     label="Package to drill down on",
-    options=product_df.package.unique(),
+    options=product_df.index,
     index=0,
 )
 
-selected_nodes = product_df.loc[product_df.package == selected_product, "package"]
-G_single = G_products.subgraph(
-    [
-        (u, v, e)
-        for u, v, e in G_products.edges(data=True)
-        if u in selected_nodes or v in selected_nodes
-    ]
-)
-for n in G_single.nodes:
-    G_single.nodes[n] = G_products.nodes[n]
-single_viz = create_pydot_viz(
-    G_single, exclude_nodes=default_excludes, custom_formats=custom_formats
-)
+selected_nodes = product_df.loc[selected_product].name
+
+G_single = nx.DiGraph()
+for u, v, e in G_products.edges(data=True):
+    if u in selected_nodes or v in selected_nodes:
+        G_single.add_edge(u, v, **e)
+
+nx.set_node_attributes(G_single, product_df.loc[list(G_single.nodes)].to_dict(orient="index"))
+
+single_viz = create_pydot_viz(G_single, exclude_nodes=default_excludes)
 
 streamlit.graphviz_chart(single_viz)
+
+# %%
