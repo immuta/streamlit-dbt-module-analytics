@@ -2,6 +2,7 @@ import json
 import networkx as nx
 import pandas
 
+
 # Shapes; https://graphviz.org/doc/info/shapes.html
 node_formats = [
     {
@@ -63,11 +64,23 @@ node_formats = [
 ]
 
 
-
-def read_graph(p="manifest.json"):
+def read_manifest(p):
     with open(p, "r") as f:
         manifest = json.loads(f.read())
+    return manifest
 
+
+def read_node_graph(manifest, product_exclusions=[]):
+    df = pandas.DataFrame.from_dict(manifest["nodes"], orient="index")
+    df = df.loc[df["resource_type"].isin(["seed", "source", "model"])]
+    enriched = df["fqn"].apply(
+        extract_attributes, product_exclusions=product_exclusions
+    )
+    enriched_df = pandas.DataFrame.from_dict(enriched.to_dict(), orient="index")
+    return df.join(enriched_df)
+
+
+def read_graph(manifest):
     G = nx.DiGraph()
     for n, d in manifest["nodes"].items():
         G.add_node(n, **d)
@@ -82,44 +95,47 @@ def read_graph(p="manifest.json"):
     for n, parents in manifest["parent_map"].items():
         for parent in parents:
             G.add_edge(parent, n)
-    
-    return G
+
+    data_graph = extract_data_graph(G)
+
+    return data_graph
+
 
 def extract_data_graph(G):
     "Returns subset of graph containing data nodes"
-    allowed_resources = ["seed", "source", "model", "analysis", "snapshot"]
+    allowed_resources = ["seed", "source", "model"]
     data_nodes = [
         n for n, e in G.nodes(data=True) if e.get("resource_type") in allowed_resources
     ]
     return G.subgraph(data_nodes)
 
-def extract_attributes(fqn, package_types: list):
-    if fqn[1] not in package_types or len(fqn) < 4:
-        raise IndexError("No match for %s", ".".join(fqn))
-    data = {
-        "dbt_project": fqn[0],
-        "category": fqn[1],
-        "name": fqn[2],
-        "layer": fqn[3] if len(fqn) > 4 else "_root_",
-        "package": fqn[1] + "." + fqn[2]
+
+def extract_attributes(fqn, product_exclusions: list = []):
+    enriched = {
+        "product_category": None,
+        "product_layer": None,
+        "product_name": None,
     }
+    if fqn[1] in product_exclusions or len(fqn) < 4:
+        return enriched
 
-    return data
+    enriched["product_category"] = fqn[1]
+    enriched["product_layer"] = fqn[3] if len(fqn) > 4 else "_root_"
+    enriched["product_name"] = fqn[1] + "." + fqn[2]
+    return enriched
 
 
-def create_pydot_viz(
-        G,
-        selected_node=None,
-        exclude_nodes=[],
-        custom_formats = {}
-    ):
+def create_pydot_viz(G, selected_node=None, exclude_nodes=[]):
     node_list = []
     node_str = ""
     G = G.subgraph(n for n in G.nodes if n not in exclude_nodes)
 
+    categories = list(set(n.split(".")[0] for n in G.nodes))
+    format_dict = dict(zip(categories, node_formats[: len(categories)]))
+
     for n, e in G.nodes(data=True):
-        category = n.split('.')[0]
-        formatting = custom_formats.get(category) #, node_formats["default"]).copy()
+        category = n.split(".")[0]
+        formatting = format_dict.get(category)  # , node_formats["default"]).copy()
         formatting["label"] = n
         if n == selected_node:
             formatting["fillcolor"] = "green"
@@ -129,7 +145,7 @@ def create_pydot_viz(
 
     edge_str = ""
     for u, v, e in G.edges(data=True):
-        edge_str += '"{}" -> "{}" [label="{}"]\n'.format(u, v, e['weight'])
+        edge_str += '"{}" -> "{}" [label="{}"]\n'.format(u, v, e["weight"])
 
     dot_viz = f"""
     digraph models {{

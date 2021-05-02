@@ -13,61 +13,48 @@ from utils import (
     extract_data_graph,
     node_formats,
     read_graph,
+    read_manifest,
+    read_node_graph,
 )
 
 logging.basicConfig()
 
 
-default_categories = [
-    "applications", 
-    "derived",
-    "exposures",
-    "external",
-    "marts",
-    "sources",
-]
-default_excludes = [
-    # "external.looker"
-]
+default_excludes = []
 
-custom_formats = {}
-for ii, cat in enumerate(default_categories):
-    custom_formats[cat] = node_formats[ii]
+manifest = read_manifest("examples/immuta/manifest.json")
+G = read_graph(manifest)
+node_df = read_node_graph(manifest)
+product_df = (
+    node_df.groupby(["product_name", "product_category", "product_layer"])
+    .size()
+    .reset_index()
+)
 
-G = read_graph("examples/immuta/manifest.json")
+edf = nx.to_pandas_edgelist(G).reset_index()
+edf = pandas.merge(
+    edf,
+    node_df.rename(columns={c: f"source_{c}" for c in node_df.columns}),
+    left_on="source",
+    right_index=True,
+)
+edf = pandas.merge(
+    edf,
+    node_df.rename(columns={c: f"target_{c}" for c in node_df.columns}),
+    left_on="target",
+    right_index=True,
+    suffixes=["", "_target"],
+)
 
-models = {}
-for node, data in G.nodes(data=True):
-    try:
-        package_data = extract_attributes(data["fqn"], default_categories)
-        models[data["unique_id"]] = {
-            "resource_type": data["resource_type"],
-            "depends_on": data.get("depends_on", {}).get("nodes", []),
-            **package_data
-        }
-    except IndexError:
-        logging.debug('Error with %s', '.'.join(data["fqn"]))
-
-model_df = pandas.DataFrame.from_dict(models, orient="index")
-package_df = model_df.groupby(["package", "name", "category", "layer"]).size().reset_index()
-
-# df = pandas.DataFrame.from_records(edges)
-df = nx.to_pandas_edgelist(G).reset_index()
-
-for attr in ["dbt_project", "category", "name", "layer", "package"]:
-    df[f"source_{attr}"] = df["source"].apply(lambda x: models.get(x, {}).get(attr))
-    df[f"target_{attr}"] = df["target"].apply(lambda x: models.get(x, {}).get(attr))
-
-gdf = df.groupby(["source_package", "target_package"]).size().reset_index()
-gdf["internal_edge"] = gdf["source_package"] == gdf["target_package"]
+gdf = edf.groupby(["source_product_name", "target_product_name"]).size().reset_index()
+gdf["internal_edge"] = gdf["source_product_name"] == gdf["target_product_name"]
 
 
 G_products = nx.DiGraph()
 for ii, s in gdf.iterrows():
-    G_products.add_edge(s["source_package"], s["target_package"], weight=s[0])
+    G_products.add_edge(s["source_product_name"], s["target_product_name"], weight=s[0])
 
-
-viz = create_pydot_viz(G_products, exclude_nodes=default_excludes, custom_formats=custom_formats)
+full_viz = create_pydot_viz(G_products, exclude_nodes=default_excludes)
 
 logging.info("Finished parsing data")
 
@@ -77,7 +64,8 @@ logging.info("Finished parsing data")
 streamlit.set_page_config(page_title="dbt Graph Analysis", layout="centered")
 
 streamlit.title("dbt Graph Analysis")
-streamlit.markdown("""
+streamlit.markdown(
+    """
     This Streamlit application reads in a dbt_ graph, performs some light
     network analysis at the global level, and then provides functionality
     for exploring individual nodes and their dependencies."""
@@ -88,42 +76,36 @@ streamlit.markdown(
     Below is a summary of the nodes contained in this graph.
 """
 )
+
+
 streamlit.dataframe(model_df.groupby(["category", "name"]).size())
+streamlit.graphviz_chart(full_viz)
 
 
-streamlit.graphviz_chart(viz)
+streamlit.header("Single Product Analysis")
+streamlit.markdown(
+    """
+    The section beelow summarizes a single group of nodes in this graph.
+"""
+)
+selected_product = streamlit.selectbox(
+    label="Package to drill down on",
+    options=product_df.package.unique(),
+    index=0,
+)
 
+selected_nodes = product_df.loc[product_df.package == selected_product, "package"]
+G_single = G_products.subgraph(
+    [
+        (u, v, e)
+        for u, v, e in G_products.edges(data=True)
+        if u in selected_nodes or v in selected_nodes
+    ]
+)
+for n in G_single.nodes:
+    G_single.nodes[n] = G_products.nodes[n]
+single_viz = create_pydot_viz(
+    G_single, exclude_nodes=default_excludes, custom_formats=custom_formats
+)
 
-# %%
-# First group is dbt project
-# Second group is package type
-# Third group package name
-# Fourth group is optional model type
-# def extract_model_info(package_types: list)
-
-
-
-
-
-# %%
-
-#%%
-
-
-# #%%
-# edges = []
-# for node, data in models.items():
-#     v = data["package"]
-#     for ref in data["depends_on"]:
-#         try:
-#             u = models[ref]["package"]
-#             edges.append({
-#                 "source": u,
-#                 "target": v,
-#                 "source_node": node,
-#                 'target_node': ref
-#             })
-#         except KeyError as e:
-#             logging.info(node)
-
-# %%
+streamlit.graphviz_chart(single_viz)
