@@ -2,6 +2,7 @@
 import json
 import matplotlib.pyplot as plt
 import networkx as nx
+import random
 import seaborn as sns
 import streamlit
 import logging
@@ -53,10 +54,17 @@ streamlit.markdown(
     Below is a summary of the nodes contained in this graph.
 """
 )
-
-col1, col2 = streamlit.beta_columns([1, 3])
+left_width, right_width = (3, 7)
+col1, col2 = streamlit.beta_columns([left_width, right_width])
 with col1:
-    streamlit.dataframe(product_df)
+    streamlit.markdown(
+    """
+    ### Global Product Graph
+
+    The adjacent graph shows the number of model references (edges)
+    connecting each adta product to each other within the global dbt
+    graph.
+    """)
 with col2:
     product_exclusions = streamlit.multiselect(
         label="Products to exclude from graph.", options=product_df.index, default=[]
@@ -64,6 +72,19 @@ with col2:
     full_viz = create_pydot_viz(G_products, exclude_nodes=product_exclusions)
     streamlit.graphviz_chart(full_viz)
 
+col1, col2 = streamlit.beta_columns([left_width, right_width])
+with col1:
+    streamlit.markdown(
+    """
+    ### Global Product Analysis
+
+    The adjacent dataframee contains statistics on each product and is interactive.
+    """)
+with col2:
+    streamlit.dataframe(product_df)
+
+
+## Deep dive
 
 streamlit.header("Single Product Analysis")
 streamlit.markdown(
@@ -77,15 +98,16 @@ selected_product = streamlit.selectbox(
     index=0,
 )
 
-selected_nodes = product_df.loc[selected_product].name
+selected_nodes = node_df.loc[node_df['product_name'] == selected_product].index
 
 G_single = nx.DiGraph()
-for u, v, e in G_products.edges(data=True):
-    if u in selected_nodes or v in selected_nodes:
-        G_single.add_edge(u, v, **e)
+for ii, s in edge_df.iterrows():
+    if s["source"] in selected_nodes or s["target"] in selected_nodes:
+        G_single.add_edge(s["source_product_node_name"], s["target_product_node_name"], weight=1, **s.to_dict())
 
 nx.set_node_attributes(
-    G_single, product_df.loc[list(G_single.nodes)].to_dict(orient="index")
+    G_single,
+    node_df.set_index("product_node_name").loc[list(G_single.nodes)].to_dict(orient="index")
 )
 
 single_viz = create_pydot_viz(G_single)

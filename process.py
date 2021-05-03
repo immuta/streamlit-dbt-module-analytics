@@ -18,7 +18,9 @@ def read_node_graph(manifest, product_exclusions=[]):
         extract_attributes, product_exclusions=product_exclusions
     )
     enriched_df = pandas.DataFrame.from_dict(enriched.to_dict(), orient="index")
-    return df.join(enriched_df)
+    node_df = df.join(enriched_df)
+    node_df["product_node_name"] = node_df.apply(lambda s: f"{s['product_name']}.{s['name']}", axis=1)
+    return node_df
 
 
 def read_graph(manifest):
