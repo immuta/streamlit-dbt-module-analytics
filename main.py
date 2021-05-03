@@ -22,45 +22,73 @@ logging.basicConfig()
 
 default_excludes = []
 
+
+def extract_dataframes(manifest):
+    node_df = read_node_graph(manifest)
+
+    G = read_graph(manifest)
+    edge_df = nx.to_pandas_edgelist(G).reset_index()
+    edge_df = pandas.merge(
+        edge_df,
+        node_df.rename(columns={c: f"source_{c}" for c in node_df.columns}),
+        left_on="source",
+        right_index=True,
+    )
+    edge_df = pandas.merge(
+        edge_df,
+        node_df.rename(columns={c: f"target_{c}" for c in node_df.columns}),
+        left_on="target",
+        right_index=True,
+    )
+    edge_df["is_internal_edge"] = edge_df["source_product_name"] == edge_df["target_product_name"]
+    return node_df, edge_df
+
+def construct_product_df(node_df, edge_df):
+    # Build the product dataframe
+    product_df = (
+        node_df.groupby(["product_name"])
+        .agg(
+            node_count=("unique_id", "count"),
+            product_layers = ('product_layer', pandas.Series.nunique),
+            product_category = ("product_category", "first"),
+            dbt_package = ("package_name", "first")
+        )
+    )
+
+    count_internal_edges = edge_df.loc[edge_df["is_internal_edge"]].groupby("source_product_name").agg(count_internal_edges=("source_product_name", "count"))
+    count_output_edges = edge_df.loc[edge_df["is_internal_edge"] == False].groupby("source_product_name").agg(
+        count_output_edges=("target_product_name", "count"),
+        count_output_products=("target_product_name", pandas.Series.nunique)
+    )
+    count_input_edges = edge_df.loc[edge_df["is_internal_edge"] == False].groupby("target_product_name").agg(
+        count_input_edges=("source_product_name", "count"),
+        count_input_products=("source_product_name", pandas.Series.nunique)
+    )
+
+    product_df = product_df.join(count_internal_edges).join(count_output_edges).join(count_input_edges).fillna(0)
+    return product_df
+
+def create_product_graph(edge_df):
+    gdf = edge_df.groupby(["source_product_name", "target_product_name"]).agg(weight=("source", "count")).reset_index()
+    G = nx.DiGraph()
+    for ii, s in gdf.iterrows():
+        G.add_edge(s["source_product_name"], s["target_product_name"], weight=s['weight'])
+    return G
+
+# Prep visual
 manifest = read_manifest("examples/immuta/manifest.json")
-G = read_graph(manifest)
-node_df = read_node_graph(manifest)
-product_df = (
-    node_df.groupby(["product_name"])
-    .agg(node_count=("unique_id", "count"))
-)
-
-edf = nx.to_pandas_edgelist(G).reset_index()
-edf = pandas.merge(
-    edf,
-    node_df.rename(columns={c: f"source_{c}" for c in node_df.columns}),
-    left_on="source",
-    right_index=True,
-)
-edf = pandas.merge(
-    edf,
-    node_df.rename(columns={c: f"target_{c}" for c in node_df.columns}),
-    left_on="target",
-    right_index=True,
-    suffixes=["", "_target"],
-)
-
-gdf = edf.groupby(["source_product_name", "target_product_name"]).size().reset_index()
-gdf["internal_edge"] = gdf["source_product_name"] == gdf["target_product_name"]
+node_df, edge_df = extract_dataframes(manifest)
+product_df = construct_product_df(node_df, edge_df)
+G_products = create_product_graph(edge_df)
 
 
-G_products = nx.DiGraph()
-for ii, s in gdf.iterrows():
-    G_products.add_edge(s["source_product_name"], s["target_product_name"], weight=s[0])
-
-full_viz = create_pydot_viz(G_products, exclude_nodes=default_excludes)
 
 logging.info("Finished parsing data")
 
 #%%
 # Streamlit Application
 
-streamlit.set_page_config(page_title="dbt Graph Analysis", layout="centered")
+streamlit.set_page_config(page_title="dbt Graph Analysis", layout="wide")
 
 streamlit.title("dbt Graph Analysis")
 streamlit.markdown(
@@ -76,9 +104,12 @@ streamlit.markdown(
 """
 )
 
-
-streamlit.dataframe(product_df)
-streamlit.graphviz_chart(full_viz)
+col1, col2 = streamlit.beta_columns([1, 3])
+with col1:
+    streamlit.dataframe(product_df)
+with col2:
+    full_viz = create_pydot_viz(G_products, exclude_nodes=default_excludes)
+    streamlit.graphviz_chart(full_viz)
 
 
 streamlit.header("Single Product Analysis")
