@@ -1,0 +1,6 @@
+black
+matplotlib
+networkx
+pandas
+seaborn
+streamlit
