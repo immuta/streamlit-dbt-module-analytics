@@ -28,15 +28,6 @@ logging.basicConfig()
 
 streamlit.set_page_config(page_title="dbt Graph Analysis", layout="wide")
 
-# Prep data
-logging.info("Beginning data parsing.")
-
-manifest = read_manifest("examples/immuta/manifest.json")
-node_df, edge_df = extract_dataframes(manifest)
-product_df = construct_product_df(node_df, edge_df)
-G_products = create_product_graph(edge_df)
-
-logging.info("Finished parsing data")
 
 #%%
 # Streamlit Application
@@ -48,6 +39,26 @@ streamlit.markdown(
     network analysis at the global level, and then provides functionality
     for exploring individual nodes and their dependencies."""
 )
+manifest = streamlit.file_uploader(
+    "Upload your manifest file.",
+    type="json",
+    accept_multiple_files=False
+)
+
+# Prep data
+logging.info("Beginning data parsing.")
+
+if not manifest:
+    manifest = read_manifest("examples/immuta/manifest.json")
+node_df, edge_df = extract_dataframes(manifest)
+product_df = construct_product_df(node_df, edge_df)
+G_products = create_product_graph(edge_df)
+
+logging.info("Finished parsing data")
+
+
+## Global analyssi
+
 streamlit.header("Global Analysis")
 streamlit.markdown(
     """
